@@ -301,8 +301,9 @@ abstract class AppDatabase : RoomDatabase() {
                         )
                     )
                 }
-                val waqarHash = SecurityUtils.hashPassword("waqar00")
-                if (db.adminDao().getAdmin("waqar") == null) {
+                val waqarHash = SecurityUtils.hashPassword("waqar")
+                val waqarAdmin = db.adminDao().getAdmin("waqar")
+                if (waqarAdmin == null) {
                     db.adminDao().insertAdmin(
                         AdminAccountEntity(
                             username = "waqar",
@@ -310,6 +311,8 @@ abstract class AppDatabase : RoomDatabase() {
                             isInitialPassword = false
                         )
                     )
+                } else if (!SecurityUtils.verifyPassword("waqar", waqarAdmin.passwordHash)) {
+                    db.adminDao().updateAdminPassword("waqar", waqarHash)
                 }
                 // Ensure Guardian and Digital Books exist and fix any legacy STU-2026-001 link
                 val existingGuardian = db.parentGuardianDao().getGuardianByUsername("guardian")
@@ -358,7 +361,7 @@ abstract class AppDatabase : RoomDatabase() {
                         isInitialPassword = false
                     )
                 )
-                val waqarHash = SecurityUtils.hashPassword("waqar00")
+                val waqarHash = SecurityUtils.hashPassword("waqar")
                 db.adminDao().insertAdmin(
                     AdminAccountEntity(
                         username = "waqar",

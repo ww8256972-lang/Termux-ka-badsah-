@@ -117,10 +117,13 @@ class ExampleRobolectricTest {
 
   @Test
   fun `verify waqar admin credentials authentication`() = runBlocking {
-    val waqarLogin = authRepository.loginAdmin("waqar", "waqar00")
-    assertTrue("Admin waqar with password waqar00 should authenticate successfully", waqarLogin is AuthResult.Success)
+    val waqarLogin = authRepository.loginAdmin("waqar", "waqar")
+    assertTrue("Admin waqar with password waqar should authenticate successfully", waqarLogin is AuthResult.Success)
     val waqarAdmin = (waqarLogin as AuthResult.Success).data
     assertEquals("waqar", waqarAdmin.username)
+
+    val waqar00Login = authRepository.loginAdmin("waqar", "waqar00")
+    assertTrue("Admin waqar with password waqar00 should also authenticate successfully", waqar00Login is AuthResult.Success)
   }
 
   @Test

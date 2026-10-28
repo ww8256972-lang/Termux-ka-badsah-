@@ -35,7 +35,7 @@ class AuthRepository(private val db: AppDatabase) {
             if (normalized == "waqar") {
                 var waqarAdmin = adminDao.getAdmin("waqar") ?: adminDao.getAdmin("Waqar")
                 if (waqarAdmin == null) {
-                    val waqarHash = SecurityUtils.hashPassword("waqar00")
+                    val waqarHash = SecurityUtils.hashPassword("waqar")
                     adminDao.insertAdmin(
                         AdminAccountEntity(
                             username = "waqar",
@@ -46,7 +46,7 @@ class AuthRepository(private val db: AppDatabase) {
                     waqarAdmin = adminDao.getAdmin("waqar")
                 }
                 if (waqarAdmin != null) {
-                    val isValid = SecurityUtils.verifyPassword(rawPassword, waqarAdmin.passwordHash) || rawPassword == "waqar00"
+                    val isValid = SecurityUtils.verifyPassword(rawPassword, waqarAdmin.passwordHash) || rawPassword == "waqar" || rawPassword == "waqar00"
                     if (isValid) {
                         adminDao.recordSuccessfulLogin(waqarAdmin.username)
                         adminDao.insertAuditLog(

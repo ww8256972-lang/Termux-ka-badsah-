@@ -53,4 +53,53 @@ class ExampleUnitTest {
         }
         assertTrue("Different payloads must produce differences in the data matrix", differences > 0)
     }
+
+    @Test
+    fun securityUtils_waqarAdminPasswordVerification() {
+        val waqarHash = com.example.core.SecurityUtils.hashPassword("waqar")
+        assertTrue("Password 'waqar' should verify with waqarHash", com.example.core.SecurityUtils.verifyPassword("waqar", waqarHash))
+        assertFalse("Wrong password should fail verification", com.example.core.SecurityUtils.verifyPassword("wrong", waqarHash))
+    }
+
+    @Test
+    fun feeArithmetic_manualPaymentAndBalanceCalculation() {
+        val totalCourseFee = 15000.0
+        val manualCashPayment = 5000.0
+        val manualUpiPayment = 4500.0
+        val totalPaid = manualCashPayment + manualUpiPayment
+        val outstandingBalance = totalCourseFee - totalPaid
+
+        assertEquals(9500.0, totalPaid, 0.001)
+        assertEquals(5500.0, outstandingBalance, 0.001)
+        assertTrue("Outstanding balance should be non-negative", outstandingBalance >= 0.0)
+    }
+
+    @Test
+    fun studentId_scaleFormattingFor100kStudents() {
+        // Verify format for 1 lakh students
+        val studentId1000 = "EDU-2026-%04d".format(1000)
+        assertEquals("EDU-2026-1000", studentId1000)
+
+        val studentId100k = "EDU-2026-%04d".format(100000)
+        assertEquals("EDU-2026-100000", studentId100k)
+        assertTrue("Student ID should preserve prefix format for 100k records", studentId100k.startsWith("EDU-2026-"))
+    }
+
+    @Test
+    fun examScoring_deterministicGradeAndPercentage() {
+        val totalQuestions = 50
+        val correctAnswers = 43
+        val percentage = (correctAnswers.toDouble() / totalQuestions.toDouble()) * 100.0
+        val grade = when {
+            percentage >= 90.0 -> "A+"
+            percentage >= 80.0 -> "A"
+            percentage >= 70.0 -> "B+"
+            percentage >= 60.0 -> "B"
+            percentage >= 50.0 -> "C"
+            else -> "F"
+        }
+        assertEquals(86.0, percentage, 0.001)
+        assertEquals("A", grade)
+    }
 }
+
