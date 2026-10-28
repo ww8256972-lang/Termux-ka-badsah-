@@ -1,0 +1,34 @@
+{
+  "project_info": {
+    "project_number": "91173738795",
+    "project_id": "edusync-academy-institute",
+    "storage_bucket": "edusync-academy-institute.appspot.com"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:91173738795:android:d4a8e23f6c1289b0345678",
+        "android_client_info": {
+          "package_name": "com.aistudio.edusync.zqmrkp"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "91173738795-edusyncwebclientid.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyD-FakePlaceholderForBuildValidationOnly"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
