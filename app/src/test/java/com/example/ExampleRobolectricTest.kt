@@ -13,6 +13,8 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import com.google.firebase.FirebaseApp
+import com.google.firebase.FirebaseOptions
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -31,6 +33,9 @@ class ExampleRobolectricTest {
   @Before
   fun setup() {
     context = ApplicationProvider.getApplicationContext<Context>()
+    if (FirebaseApp.getApps(context).isEmpty()) {
+         FirebaseApp.initializeApp(context, FirebaseOptions.Builder().setProjectId("dummy").setApplicationId("dummy").setApiKey("dummy").build())
+    }
     database = AppDatabase.getInstance(context)
     authRepository = AuthRepository(database)
     instituteRepository = InstituteRepository(database)
