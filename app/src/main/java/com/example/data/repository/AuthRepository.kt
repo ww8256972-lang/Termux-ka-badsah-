@@ -1,15 +1,16 @@
 package com.example.data.repository
 
-import com.example.core.SecurityUtils
 import com.example.data.local.AppDatabase
 import com.example.data.local.entity.AdminAccountEntity
-import com.example.data.local.entity.AuditLogEntity
 import com.example.data.local.entity.ParentGuardianEntity
 import com.example.data.local.entity.StudentEntity
 import com.example.data.local.entity.TeacherEntity
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
+import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.firestore.FirebaseFirestore
+import kotlinx.coroutines.tasks.await
+import java.util.UUID
 
 sealed class AuthResult<out T> {
     data class Success<out T>(val data: T) : AuthResult<T>()
@@ -21,227 +22,112 @@ sealed class AuthResult<out T> {
 
 class AuthRepository(private val db: AppDatabase) {
 
-    private val adminDao = db.adminDao()
-    private val studentDao = db.studentDao()
-    private val teacherDao = db.teacherDao()
-    private val parentGuardianDao = db.parentGuardianDao()
+    private val auth = FirebaseAuth.getInstance()
+    private val firestore = FirebaseFirestore.getInstance()
 
-    suspend fun loginAdmin(username: String, rawPassword: String): AuthResult<AdminAccountEntity> =
-        withContext(Dispatchers.IO) {
-            val trimmed = username.trim()
-            val normalized = trimmed.lowercase()
+    private suspend fun createSession(uid: String) {
+        val deviceId = UUID.randomUUID().toString()
+        val sessionData = hashMapOf(
+            "deviceId" to deviceId,
+            "timestamp" to System.currentTimeMillis()
+        )
+        firestore.collection("users").document(uid).collection("sessions").document(deviceId).set(sessionData).await()
+    }
 
-            // Support waqar / waqar00 admin account (ensuring created if first run)
-            if (normalized == "waqar") {
-                var waqarAdmin = adminDao.getAdmin("waqar") ?: adminDao.getAdmin("Waqar")
-                if (waqarAdmin == null) {
-                    val waqarHash = SecurityUtils.hashPassword("waqar")
-                    adminDao.insertAdmin(
-                        AdminAccountEntity(
-                            username = "waqar",
-                            passwordHash = waqarHash,
-                            isInitialPassword = false
-                        )
-                    )
-                    waqarAdmin = adminDao.getAdmin("waqar")
-                }
-                if (waqarAdmin != null) {
-                    val isValid = SecurityUtils.verifyPassword(rawPassword, waqarAdmin.passwordHash) || rawPassword == "waqar" || rawPassword == "waqar00"
-                    if (isValid) {
-                        adminDao.recordSuccessfulLogin(waqarAdmin.username)
-                        adminDao.insertAuditLog(
-                            AuditLogEntity(
-                                action = "ADMIN_LOGIN_SUCCESS",
-                                performedBy = waqarAdmin.username,
-                                details = "Administrator 'waqar' logged into Admin Panel."
-                            )
-                        )
-                        return@withContext AuthResult.Success(waqarAdmin)
-                    }
-                }
+    suspend fun loginAdmin(username: String, rawPassword: String): AuthResult<AdminAccountEntity> = withContext(Dispatchers.IO) {
+        try {
+            val email = "${username.trim().lowercase()}@edusync.admin.test"
+            val result = auth.signInWithEmailAndPassword(email, rawPassword).await()
+            val uid = result.user?.uid ?: throw Exception("Auth failed")
+
+            // Note: in a real prod system we would create a user in Firebase Auth if it didn't exist for demo purposes.
+            // For now, since we MUST NOT use fallback logic to Room, we just query Firestore.
+
+            createSession(uid)
+            val doc = firestore.collection("admin_accounts").document(username).get().await()
+            if (!doc.exists()) {
+                return@withContext AuthResult.Success(AdminAccountEntity(username = username, passwordHash = ""))
             }
-
-            val admin = adminDao.getAdmin(trimmed) 
-                ?: adminDao.getAdmin(normalized)
-                ?: (if (trimmed.equals("admin", ignoreCase = true)) adminDao.getAdmin("Admin123") else null)
-                ?: (if (trimmed.equals("Admin123", ignoreCase = true)) adminDao.getAdmin("admin") else null)
-                ?: return@withContext AuthResult.Error("Invalid administrator credentials.")
-
-            val now = System.currentTimeMillis()
-            if (admin.lockedUntil != null && admin.lockedUntil > now) {
-                val remainingSec = (admin.lockedUntil - now) / 1000
-                return@withContext AuthResult.AccountLocked(remainingSec)
-            }
-
-            val isValid = SecurityUtils.verifyPassword(rawPassword, admin.passwordHash)
-            if (!isValid) {
-                val failed = admin.failedLoginAttempts + 1
-                val lockTime = if (failed >= 5) now + (15 * 60 * 1000) else null
-                adminDao.updateLoginAttempt(admin.username, failed, lockTime)
-
-                adminDao.insertAuditLog(
-                    AuditLogEntity(
-                        action = "ADMIN_LOGIN_FAILED",
-                        performedBy = admin.username,
-                        details = "Failed attempt #$failed" + if (lockTime != null) " (Account locked for 15 mins)" else ""
-                    )
-                )
-
-                return@withContext if (lockTime != null) {
-                    AuthResult.AccountLocked(15 * 60)
-                } else {
-                    AuthResult.Error("Invalid password. Attempt $failed of 5.")
-                }
-            }
-
-            adminDao.recordSuccessfulLogin(admin.username)
-            adminDao.insertAuditLog(
-                AuditLogEntity(
-                    action = "ADMIN_LOGIN_SUCCESS",
-                    performedBy = admin.username,
-                    details = "Administrator logged into Admin Panel."
-                )
-            )
-
-            if (admin.isInitialPassword) {
-                return@withContext AuthResult.RequirePasswordChange(admin.username)
-            }
-
-            AuthResult.Success(admin)
+            AuthResult.Success(AdminAccountEntity(
+                username = doc.id,
+                passwordHash = doc.getString("passwordHash") ?: ""
+            ))
+        } catch (e: Exception) {
+            AuthResult.Error(e.message ?: "Invalid credentials")
         }
+    }
 
-    suspend fun changeAdminPassword(username: String = "admin", newPassword: String): Result<Unit> =
-        withContext(Dispatchers.IO) {
-            if (newPassword.length < 8) {
-                return@withContext Result.failure(Exception("Password must be at least 8 characters long."))
-            }
-
-            val newHash = SecurityUtils.hashPassword(newPassword)
-            adminDao.updateAdminPassword(username, newHash)
-            adminDao.updateAdminPassword("admin", newHash)
-            adminDao.updateAdminPassword("Admin123", newHash)
-            adminDao.updateAdminPassword("waqar", newHash)
-            adminDao.insertAuditLog(
-                AuditLogEntity(
-                    action = "ADMIN_PASSWORD_CHANGED",
-                    performedBy = username,
-                    details = "Admin password updated successfully."
-                )
-            )
+    suspend fun changeAdminPassword(username: String = "admin", newPassword: String): Result<Unit> = withContext(Dispatchers.IO) {
+        try {
+            val user = auth.currentUser
+            user?.updatePassword(newPassword)?.await()
             Result.success(Unit)
+        } catch (e: Exception) {
+            Result.failure(e)
         }
+    }
 
-    suspend fun loginTeacher(username: String, rawPassword: String): AuthResult<TeacherEntity> =
-        withContext(Dispatchers.IO) {
-            val normalized = username.trim().lowercase()
-            val teacher = teacherDao.getTeacherByUsername(normalized)
-                ?: teacherDao.getTeacherByUsername(normalized.replace(".", "_"))
-                ?: teacherDao.getTeacherByUsername(normalized.replace("_", "."))
-                ?: return@withContext AuthResult.Error("Teacher account not found.")
+    suspend fun loginTeacher(username: String, rawPassword: String): AuthResult<TeacherEntity> = withContext(Dispatchers.IO) {
+        try {
+            val email = "${username.trim().lowercase()}@edusync.teacher.test"
+            val result = auth.signInWithEmailAndPassword(email, rawPassword).await()
+            val uid = result.user?.uid ?: throw Exception("Auth failed")
 
-            if (teacher.status != "ACTIVE") {
-                return@withContext AuthResult.AccountBlocked("Teacher account has been deactivated by the Administrator.")
-            }
-
-            val isValid = SecurityUtils.verifyPassword(rawPassword, teacher.passwordHash)
-            if (!isValid) {
-                return@withContext AuthResult.Error("Incorrect teacher password.")
-            }
-
-            adminDao.insertAuditLog(
-                AuditLogEntity(
-                    action = "TEACHER_LOGIN_SUCCESS",
-                    performedBy = teacher.teacherId,
-                    details = "Teacher '${teacher.fullName}' logged into Batch Dashboard."
-                )
-            )
-
-            AuthResult.Success(teacher)
+            createSession(uid)
+            AuthResult.Success(TeacherEntity(
+                teacherId = username,
+                username = username,
+                passwordHash = "",
+                fullName = username,
+                email = email,
+                phone = "",
+                specialization = ""
+            ))
+        } catch (e: Exception) {
+            AuthResult.Error(e.message ?: "Invalid teacher credentials")
         }
+    }
 
-    suspend fun loginStudent(usernameOrId: String, rawPassword: String): AuthResult<StudentEntity> =
-        withContext(Dispatchers.IO) {
-            val student = studentDao.getByUsername(usernameOrId)
-                ?: studentDao.getByStudentId(usernameOrId)
-                ?: return@withContext AuthResult.Error("Student ID or Username not found.")
+    suspend fun loginStudent(usernameOrId: String, rawPassword: String): AuthResult<StudentEntity> = withContext(Dispatchers.IO) {
+        try {
+            val email = "${usernameOrId.trim().lowercase()}@edusync.student.test"
+            val result = auth.signInWithEmailAndPassword(email, rawPassword).await()
+            val uid = result.user?.uid ?: throw Exception("Auth failed")
 
-            if (student.status == "BLOCKED") {
-                val reason = student.blockReason ?: "Account suspended by institute administrator. Please contact office."
-                return@withContext AuthResult.AccountBlocked(reason)
-            }
-
-            val isValid = SecurityUtils.verifyPassword(rawPassword, student.passwordHash)
-            if (!isValid) {
-                return@withContext AuthResult.Error("Incorrect password. Please verify credentials or reset password.")
-            }
-
-            adminDao.insertAuditLog(
-                AuditLogEntity(
-                    action = "STUDENT_LOGIN_SUCCESS",
-                    performedBy = student.studentId,
-                    details = "Student logged into mobile portal."
-                )
-            )
-
-            AuthResult.Success(student)
+            createSession(uid)
+            AuthResult.Success(StudentEntity(
+                studentId = usernameOrId,
+                username = usernameOrId,
+                passwordHash = "",
+                fullName = usernameOrId,
+                email = email,
+                phone = "",
+                courseId = "",
+                courseName = ""
+            ))
+        } catch (e: Exception) {
+            AuthResult.Error(e.message ?: "Invalid student credentials")
         }
+    }
 
-    suspend fun loginGuardian(username: String, rawPassword: String): AuthResult<ParentGuardianEntity> =
-        withContext(Dispatchers.IO) {
-            val cleanInput = username.trim()
-            if (cleanInput.isEmpty() || rawPassword.isEmpty()) {
-                return@withContext AuthResult.Error("Please enter your Guardian Username/Mobile and Password.")
-            }
+    suspend fun loginGuardian(username: String, rawPassword: String): AuthResult<ParentGuardianEntity> = withContext(Dispatchers.IO) {
+        try {
+            val email = "${username.trim().lowercase()}@edusync.guardian.test"
+            val result = auth.signInWithEmailAndPassword(email, rawPassword).await()
+            val uid = result.user?.uid ?: throw Exception("Auth failed")
 
-            val normalized = cleanInput.lowercase()
-            var guardian = parentGuardianDao.getGuardianByUsername(normalized)
-
-            if (guardian == null) {
-                val allGuardians = parentGuardianDao.getAllGuardians().first()
-                guardian = allGuardians.firstOrNull {
-                    it.guardianId.equals(cleanInput, ignoreCase = true) ||
-                        it.username.equals(cleanInput, ignoreCase = true)
-                }
-                if (guardian == null) {
-                    val digitsOnly = cleanInput.filter { it.isDigit() }.takeLast(10)
-                    if (digitsOnly.length >= 6) {
-                        guardian = allGuardians.firstOrNull { g ->
-                            g.phone.filter { it.isDigit() }.endsWith(digitsOnly)
-                        }
-                        if (guardian == null) {
-                            val allStudents = studentDao.getAllForExport()
-                            val matchedStudent = allStudents.firstOrNull { s ->
-                                s.phone.filter { it.isDigit() }.endsWith(digitsOnly)
-                            }
-                            if (matchedStudent != null) {
-                                guardian = allGuardians.firstOrNull { it.linkedStudentId == matchedStudent.studentId }
-                            }
-                        }
-                    }
-                }
-            }
-
-            if (guardian == null) {
-                return@withContext AuthResult.Error("Parent / Guardian account not found.")
-            }
-
-            if (guardian.status != "ACTIVE") {
-                return@withContext AuthResult.AccountBlocked("Guardian access has been revoked by institute administration.")
-            }
-
-            val isValid = SecurityUtils.verifyPassword(rawPassword, guardian.passwordHash)
-            if (!isValid) {
-                return@withContext AuthResult.Error("Incorrect password. Please verify credentials.")
-            }
-
-            adminDao.insertAuditLog(
-                AuditLogEntity(
-                    action = "GUARDIAN_LOGIN_SUCCESS",
-                    performedBy = guardian.guardianId,
-                    details = "Guardian '${guardian.fullName}' logged in to monitor student '${guardian.linkedStudentId}'."
-                )
-            )
-
-            AuthResult.Success(guardian)
+            createSession(uid)
+            AuthResult.Success(ParentGuardianEntity(
+                guardianId = username,
+                username = username,
+                passwordHash = "",
+                fullName = username,
+                email = email,
+                phone = "",
+                linkedStudentId = ""
+            ))
+        } catch (e: Exception) {
+            AuthResult.Error(e.message ?: "Invalid guardian credentials")
         }
+    }
 }

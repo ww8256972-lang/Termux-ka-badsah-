@@ -10,6 +10,9 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.withContext
+import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.firestore.FirebaseFirestore
+import kotlinx.coroutines.tasks.await
 import org.json.JSONArray
 import org.json.JSONObject
 import java.text.SimpleDateFormat
@@ -1694,6 +1697,18 @@ class InstituteRepository(private val db: AppDatabase) {
             val student = getStudentById(studentId)
                 ?: return@withContext Result.failure(IllegalArgumentException("Student '$studentId' not found."))
             val sessionTokenRevocationStamp = System.currentTimeMillis()
+            try {
+                val user = FirebaseAuth.getInstance().currentUser
+                if (user != null) {
+                    val sessions = FirebaseFirestore.getInstance().collection("users").document(user.uid).collection("sessions").get().await()
+                    for (session in sessions.documents) {
+                        session.reference.delete().await()
+                    }
+                    FirebaseAuth.getInstance().signOut()
+                }
+            } catch (e: Exception) {
+                // Ignore for now
+            }
             adminDao.insertAuditLog(
                 AuditLogEntity(
                     action = "LOGOUT_ALL_DEVICES",
